@@ -42,3 +42,12 @@ export function getGeminiApiKey(task: GeminiTask): string {
   const name = geminiKeyEnvNames[task];
   return required(name, process.env[name]);
 }
+
+/**
+ * Gemini model name. Configurable via env so a deprecated/rotated model can be
+ * swapped without a code change (model availability on the free tier changes
+ * often — see docs/ROADMAP.md). Falls back to a current Flash-class default.
+ */
+export function getGeminiModel(): string {
+  return process.env.GEMINI_MODEL?.trim() || "gemini-flash-latest";
+}

@@ -1,7 +1,23 @@
 import { redirect } from "next/navigation";
 
 import { signOut } from "./login/actions";
+import UploadDocument from "./components/UploadDocument";
+import RetryExtraction from "./components/RetryExtraction";
 import { createClient } from "@/lib/supabase/server";
+
+type DocumentRow = {
+  id: string;
+  original_filename: string;
+  size_bytes: number;
+  status: string;
+  created_at: string;
+};
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -14,6 +30,39 @@ export default async function DashboardPage() {
   if (!user) {
     redirect("/login");
   }
+
+  // RLS restricts this to the current user's own documents.
+  const { data: documents } = await supabase
+    .from("documents")
+    .select("id, original_filename, size_bytes, status, created_at")
+    .order("created_at", { ascending: false })
+    .returns<DocumentRow[]>();
+
+  const docs = documents ?? [];
+
+  // Fetch analysis summaries for these documents (RLS-scoped). Presence of a
+  // row means the document has been analyzed.
+  const summaries = new Map<string, string>();
+  if (docs.length > 0) {
+    const { data: analyses } = await supabase
+      .from("analyses")
+      .select("document_id, summary")
+      .in(
+        "document_id",
+        docs.map((d) => d.id),
+      )
+      .returns<{ document_id: string; summary: string }[]>();
+    for (const a of analyses ?? []) {
+      summaries.set(a.document_id, a.summary);
+    }
+  }
+
+  const statusLabel: Record<string, string> = {
+    uploaded: "Uploaded",
+    processing: "Analyzing…",
+    ready: "Analyzed",
+    failed: "Analysis failed",
+  };
 
   return (
     <>
@@ -40,9 +89,8 @@ export default async function DashboardPage() {
       <main className="app-main">
         <h1 className="page-title">Dashboard</h1>
         <p className="page-subtitle">
-          Upload a research paper, analyze it, and generate a LinkedIn draft you
-          can review before publishing. This is the application foundation —
-          upload and analysis are not wired up yet.
+          Upload a research paper (PDF), analyze it, and generate a LinkedIn
+          draft you can review before publishing.
         </p>
 
         <div className="dashboard-grid">
@@ -51,20 +99,46 @@ export default async function DashboardPage() {
               Upload a document
             </h2>
             <p className="card__hint">
-              Add a research paper (PDF) or import paper metadata from Excel.
+              Add a research paper as a PDF. Excel import comes later.
             </p>
-            <div className="empty-state" role="status">
-              <span className="empty-state__icon" aria-hidden="true">
-                📄
-              </span>
-              <p className="empty-state__text">
-                No documents yet. Upload a PDF or Excel file to get started.
-              </p>
-              <button type="button" className="button" disabled aria-disabled="true">
-                Upload document
-                <span className="sr-only"> (coming soon)</span>
-              </button>
-            </div>
+
+            <UploadDocument />
+
+            {docs.length === 0 ? (
+              <div className="empty-state" role="status">
+                <span className="empty-state__icon" aria-hidden="true">
+                  📄
+                </span>
+                <p className="empty-state__text">
+                  No documents yet. Upload a PDF to get started.
+                </p>
+              </div>
+            ) : (
+              <ul className="doc-list">
+                {docs.map((doc) => {
+                  const summary = summaries.get(doc.id);
+                  return (
+                    <li key={doc.id} className="doc-item">
+                      <div className="doc-item__top">
+                        <span className="doc-item__name">
+                          {doc.original_filename}
+                        </span>
+                        <span className="doc-item__meta">
+                          {formatBytes(doc.size_bytes)} ·{" "}
+                          {statusLabel[doc.status] ?? doc.status}
+                          {doc.status === "failed" ? (
+                            <RetryExtraction documentId={doc.id} />
+                          ) : null}
+                        </span>
+                      </div>
+                      {doc.status === "ready" && summary ? (
+                        <p className="doc-item__summary">{summary}</p>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </section>
 
           <section className="card" aria-labelledby="drafts-heading">
@@ -87,8 +161,8 @@ export default async function DashboardPage() {
         </div>
 
         <p className="note">
-          Foundation only: authentication, document processing, AI analysis, and
-          draft versioning are implemented in later Phase 1 steps.
+          Upload and AI analysis are live. LinkedIn draft generation and draft
+          versioning are implemented in later Phase 1 steps.
         </p>
       </main>
     </>

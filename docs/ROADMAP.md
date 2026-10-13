@@ -204,6 +204,7 @@ call sites. Keys stay server-side only and are never exposed to the client.
 - `SUPABASE_SERVICE_ROLE_KEY` (server only)
 - `GEMINI_API_KEY_ANALYSIS` (server only)
 - `GEMINI_API_KEY_DRAFTING` (server only)
+- `GEMINI_MODEL` (server only, optional; defaults to `gemini-flash-latest`)
 
 A tracked `.env.local.example` will document these names when the app is scaffolded.
 
@@ -242,6 +243,66 @@ entries; do not rewrite history.
   No runtime/production exposure. The only offered fix is a breaking downgrade to
   `eslint-config-next@14`, which conflicts with Next.js 16, so it is intentionally
   not applied. Revisit when Next ships an updated lint plugin.
+
+### 2026-10-13
+
+- **Auth implemented (Phase 1, item 1).** Supabase email/password via
+  `@supabase/supabase-js` + `@supabase/ssr` (cookie-based). Server/browser
+  clients split; secrets isolated behind a `server-only` env module. Route
+  protection + session refresh in Next 16 `proxy.ts` (renamed from the
+  deprecated `middleware` convention). Dashboard verifies the user server-side.
+- **Node upgraded 20 → 22 LTS.** Latest `supabase-js` dropped Node 20 (EOL
+  Apr 2026). Managed via nvm; `engines` now `>=22`.
+- **Lint toolchain migrated for Next 16.** `next lint` was removed in Next 16,
+  and `eslint-config-next` via `FlatCompat` crashes under ESLint 9 flat config.
+  Switched to a native flat config using `@next/eslint-plugin-next` +
+  `typescript-eslint` + `eslint-plugin-react-hooks` directly; `lint` script now
+  runs `eslint .`. Removed `eslint-config-next` and `@eslint/eslintrc`. This
+  also resolved most of the earlier high-severity dev-only audit advisory
+  (lint tree shrank significantly).
+- **PDF upload (Phase 1, item 2).** `documents` table (migration 0001) + private
+  Supabase Storage bucket (migration 0002), both with per-user RLS. Upload API
+  validates type (PDF) and size (25 MB) server-side; files stored at
+  `{user_id}/{document_id}.pdf`; orphaned bytes rolled back if the DB insert
+  fails.
+- **ARCHITECTURE DECISION — store a structured ANALYSIS (context object), not
+  page-level text or citations.** Product intent: the goal is a good LinkedIn
+  post from the *right context*, NOT an academic, page-referenced citation
+  trail. We therefore reverted the earlier `document_pages` design. Pipeline:
+  extract text locally with `unpdf` → send text to Gemini → store ONE structured
+  analysis per document (migration 0003 `analyses`). Rationale:
+    - **Cost/quota:** extracting text locally and sending text (not whole PDFs)
+      to Gemini is far cheaper on the cut free tier, and lets us regenerate
+      without re-uploading the PDF each time.
+    - **Still no fabrication of hard specifics:** the analysis prompt forbids
+      inventing numbers/metrics/citations not present — not for academic rigor,
+      but to avoid a confidently-wrong stat in a public post. This is a softened
+      form of the steering file's grounding rule, appropriate for LinkedIn
+      content rather than paper reproduction.
+    - **Trade-off accepted:** plain-text extraction loses figures/tables. If
+      figure-heavy papers produce thin analyses, revisit by also passing the raw
+      PDF to Gemini (multimodal) while keeping the stored analysis as the record.
+- **GENERALIZATION (end goal: general LinkedIn content, not just papers).**
+  Schema is deliberately source-agnostic so broadening later is additive, not a
+  rewrite:
+    - `documents` is a generic uploaded source (not "papers").
+    - `analyses.content` is **JSONB** (not paper-specific columns) and carries a
+      `source_kind` enum (currently just `'paper'`, extensible to `article`,
+      `note`, `url`, …) so the context-object shape can evolve without a schema
+      change.
+    - The **draft core** (to be built) will treat a paper/analysis as ONE
+      optional *source* of a draft, not a required parent — so drafts from
+      general chat/notes/URLs fit the same model, and Phase 3 publishing attaches
+      to an approved draft version regardless of origin.
+- **AI provider abstraction.** `src/lib/ai/gemini.ts` exposes `generateJson`
+  with task-scoped keys (`analysis`/`drafting`), 429/5xx retry with exponential
+  backoff + jitter, and `QuotaExceededError`. Model name is env-configurable
+  (`GEMINI_MODEL`, default `gemini-flash-latest`) because free-tier model
+  availability changes often (2.5-class deprecation signals seen Oct 2026).
+  Call sites depend on this module, not the SDK, so the provider is replaceable.
+- **Analysis runs after upload via Next `after()`** (post-response), with a
+  `/api/documents/[id]/retry` route for user-triggered re-runs. Not a durable
+  job (out of scope for Phase 1); status flows `processing → ready | failed`.
 
 ---
 
