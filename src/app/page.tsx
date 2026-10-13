@@ -1,4 +1,20 @@
-export default function DashboardPage() {
+import { redirect } from "next/navigation";
+
+import { signOut } from "./login/actions";
+import { createClient } from "@/lib/supabase/server";
+
+export default async function DashboardPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  // Defense in depth: middleware already redirects unauthenticated users, but
+  // enforce it here too so the page never renders without a verified session.
+  if (!user) {
+    redirect("/login");
+  }
+
   return (
     <>
       <header className="app-header">
@@ -7,6 +23,17 @@ export default function DashboardPage() {
             LinkedIn Content Workspace
             <span className="brand__badge">Phase 1</span>
           </span>
+          <div className="user-chip">
+            <span className="user-chip__email">{user.email}</span>
+            <form action={signOut}>
+              <button
+                type="submit"
+                className="button button--secondary button--small"
+              >
+                Sign out
+              </button>
+            </form>
+          </div>
         </div>
       </header>
 
