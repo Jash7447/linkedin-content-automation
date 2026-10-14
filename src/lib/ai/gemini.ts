@@ -26,6 +26,15 @@ export class QuotaExceededError extends Error {
   }
 }
 
+export class ModelOverloadedError extends Error {
+  constructor(
+    message = "The AI model is busy right now. Please try again in a moment.",
+  ) {
+    super(message);
+    this.name = "ModelOverloadedError";
+  }
+}
+
 const MAX_ATTEMPTS = 4;
 const BASE_DELAY_MS = 800;
 
@@ -94,8 +103,12 @@ export async function generateJson<T>(params: {
     }
   }
 
-  if (isRetryable(statusOf(lastError)) && statusOf(lastError) === 429) {
+  const finalStatus = statusOf(lastError);
+  if (finalStatus === 429) {
     throw new QuotaExceededError();
+  }
+  if (finalStatus === 503) {
+    throw new ModelOverloadedError();
   }
   throw lastError instanceof Error
     ? lastError

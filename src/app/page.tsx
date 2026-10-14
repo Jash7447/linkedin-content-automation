@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { signOut } from "./login/actions";
 import UploadDocument from "./components/UploadDocument";
 import RetryExtraction from "./components/RetryExtraction";
+import AnalyzedDocument from "./components/AnalyzedDocument";
+import type { AnalysisContent } from "@/lib/analysis";
 import { createClient } from "@/lib/supabase/server";
 
 type DocumentRow = {
@@ -11,6 +13,28 @@ type DocumentRow = {
   size_bytes: number;
   status: string;
   created_at: string;
+};
+
+type AnalysisRow = {
+  id: string;
+  document_id: string;
+  summary: string;
+  content: AnalysisContent;
+};
+
+export type VersionView = {
+  id: string;
+  version_number: number;
+  post_text: string;
+  mermaid_source: string | null;
+  review_status: string;
+};
+
+export type DraftView = {
+  id: string;
+  title: string;
+  current_version_id: string | null;
+  versions: VersionView[]; // all versions, newest first
 };
 
 function formatBytes(bytes: number): string {
@@ -31,7 +55,7 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  // RLS restricts this to the current user's own documents.
+  // RLS restricts all of these to the current user's own rows.
   const { data: documents } = await supabase
     .from("documents")
     .select("id, original_filename, size_bytes, status, created_at")
@@ -40,21 +64,56 @@ export default async function DashboardPage() {
 
   const docs = documents ?? [];
 
-  // Fetch analysis summaries for these documents (RLS-scoped). Presence of a
-  // row means the document has been analyzed.
-  const summaries = new Map<string, string>();
+  // Full analyses for these documents.
+  const analysisByDoc = new Map<string, AnalysisRow>();
   if (docs.length > 0) {
     const { data: analyses } = await supabase
       .from("analyses")
-      .select("document_id, summary")
+      .select("id, document_id, summary, content")
       .in(
         "document_id",
         docs.map((d) => d.id),
       )
-      .returns<{ document_id: string; summary: string }[]>();
+      .returns<AnalysisRow[]>();
     for (const a of analyses ?? []) {
-      summaries.set(a.document_id, a.summary);
+      analysisByDoc.set(a.document_id, a);
     }
+  }
+
+  // Existing drafts (with their current version) grouped by source analysis.
+  const draftsByAnalysis = new Map<string, DraftView[]>();
+  const { data: drafts } = await supabase
+    .from("drafts")
+    .select(
+      "id, title, source_analysis_id, current_version_id, draft_versions(id, post_text, mermaid_source, review_status, version_number)",
+    )
+    .order("created_at", { ascending: false });
+
+  for (const d of drafts ?? []) {
+    const row = d as unknown as {
+      id: string;
+      title: string;
+      source_analysis_id: string | null;
+      current_version_id: string | null;
+      draft_versions: VersionView[] | null;
+    };
+    if (!row.source_analysis_id) continue;
+
+    const versions = (row.draft_versions ?? [])
+      .slice()
+      .sort((a, b) => b.version_number - a.version_number); // newest first
+
+    if (versions.length === 0) continue;
+
+    const view: DraftView = {
+      id: row.id,
+      title: row.title,
+      current_version_id: row.current_version_id,
+      versions,
+    };
+    const list = draftsByAnalysis.get(row.source_analysis_id) ?? [];
+    list.push(view);
+    draftsByAnalysis.set(row.source_analysis_id, list);
   }
 
   const statusLabel: Record<string, string> = {
@@ -116,7 +175,10 @@ export default async function DashboardPage() {
             ) : (
               <ul className="doc-list">
                 {docs.map((doc) => {
-                  const summary = summaries.get(doc.id);
+                  const analysis = analysisByDoc.get(doc.id);
+                  const existingDrafts = analysis
+                    ? draftsByAnalysis.get(analysis.id) ?? []
+                    : [];
                   return (
                     <li key={doc.id} className="doc-item">
                       <div className="doc-item__top">
@@ -131,8 +193,14 @@ export default async function DashboardPage() {
                           ) : null}
                         </span>
                       </div>
-                      {doc.status === "ready" && summary ? (
-                        <p className="doc-item__summary">{summary}</p>
+
+                      {doc.status === "ready" && analysis ? (
+                        <AnalyzedDocument
+                          analysisId={analysis.id}
+                          summary={analysis.summary}
+                          content={analysis.content}
+                          existingDrafts={existingDrafts}
+                        />
                       ) : null}
                     </li>
                   );
@@ -146,23 +214,42 @@ export default async function DashboardPage() {
               Drafts awaiting review
             </h2>
             <p className="card__hint">
-              Generated drafts appear here for you to edit, approve, or reject.
+              Generated drafts appear under their source paper. Review and
+              versioning tools are the next step.
             </p>
-            <div className="empty-state" role="status">
-              <span className="empty-state__icon" aria-hidden="true">
-                📝
-              </span>
-              <p className="empty-state__text">
-                No drafts awaiting review. Analyze a paper to generate your first
-                draft.
-              </p>
-            </div>
+            {(() => {
+              const all = Array.from(draftsByAnalysis.values()).flat();
+              const pending = all.filter((d) => {
+                const current =
+                  d.versions.find((v) => v.id === d.current_version_id) ??
+                  d.versions[0];
+                return current?.review_status === "pending";
+              }).length;
+              if (all.length === 0) {
+                return (
+                  <div className="empty-state" role="status">
+                    <span className="empty-state__icon" aria-hidden="true">
+                      📝
+                    </span>
+                    <p className="empty-state__text">
+                      No drafts yet. Generate a draft from an analyzed paper.
+                    </p>
+                  </div>
+                );
+              }
+              return (
+                <p className="draft-tally">
+                  {all.length} draft{all.length === 1 ? "" : "s"} total
+                  {pending > 0 ? ` · ${pending} pending review` : ""}.
+                </p>
+              );
+            })()}
           </section>
         </div>
 
         <p className="note">
-          Upload and AI analysis are live. LinkedIn draft generation and draft
-          versioning are implemented in later Phase 1 steps.
+          Upload, analysis, and draft generation are live. Draft editing,
+          versioning, and approve/reject are the next Phase 1 step.
         </p>
       </main>
     </>

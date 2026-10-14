@@ -349,3 +349,68 @@ Captured now so Phase 1 design does not block them. These are **not** Phase 1 wo
 - Define an explicit retention policy and a cleanup mechanism. This also protects
   the 1 GB Supabase free-storage limit. Aligns with the steering file's
   "sensible data retention and deletion behavior" rule.
+
+### Automation, scheduling & compute (Phase 3/4 — do not build in Phase 1)
+
+User-stated intent (2026-10-13): after deployment, add time-triggered and
+chained automation beyond the request/response features built in Phase 1:
+
+1. **Pipeline chaining:** an analyzed paper flows automatically into draft
+   generation (no manual click). Lightest to add; can be chained right after
+   analysis. Make draft generation a *callable unit* (not only a UI button) so a
+   pipeline/cron can invoke it. (Phase 1 draft code is being designed this way.)
+2. **Email when a draft is ready for review.** Needs a trigger (draft reaches
+   ready) + an email provider.
+3. **Interval publishing:** e.g. "every 4–5 days, publish one approved post if an
+   approved version exists." Needs a scheduler **and** the LinkedIn publishing
+   integration (Phase 3, gated on verified official LinkedIn API access).
+4. **Diagrams/images:** generate a system diagram as **Mermaid source** (text,
+   LLM-generated, validated, rendered client-side) at draft time — NOT raster
+   image generation or an always-on compute instance. Extracting an existing
+   figure *out of* a PDF (`unpdf` can extract images) is a separate heavier
+   feature. This is draft-time work, not a scheduler concern.
+
+#### Why these need more than request-triggered functions
+
+Everything in Phase 1 runs because a user made a request. The above are
+time-triggered (no user in the loop) and some are multi-step, so they need a
+**scheduler** (cron) and, for heavier/long/retried work, **durable background
+execution**. A plain serverless function does not schedule itself.
+
+#### Confirmed/candidate tools (all free-tier; re-verify limits before relying)
+
+| Need | Tool | Notes |
+|---|---|---|
+| Serverless app + request functions | **Vercel Hobby** | Already in use. Functions capped at **60s**; max 12 functions/deployment on Hobby. |
+| Scheduler (time trigger) | **Vercel Cron** (free on Hobby) | Calls one of our API routes on a schedule. Natural fit; low frequency is fine for "every 4–5 days". DB-centric alternative: **Supabase scheduled Edge Functions / `pg_cron`** (free on our project). |
+| Email ("draft ready") | **Resend** (free tier) | Purpose-built; low-volume friendly. Supabase built-in email is test-only (heavily rate-limited). Requires later domain/SMTP setup. |
+| Durable background jobs / retries | **Upstash QStash** (free tier) | Serverless queue + scheduler with retries. Add ONLY if a job exceeds ~60s or must survive failures. Preferred over adopting a second cloud. |
+
+#### Compute-option evaluation (separate clouds)
+
+Evaluated **Azure Functions**, **Google Cloud Functions / Cloud Run**, and
+**Cloudflare Workers** at the user's request.
+
+- **Decision:** do NOT adopt a second compute cloud preemptively. The app already
+  has a serverless platform (Vercel) and a free scheduler (Vercel Cron). A second
+  FaaS provider duplicates the credential surface (Supabase service-role + Gemini
+  keys in two places), doubles logs/dashboards/failure modes, and violates the
+  steering rule "do not introduce extra infrastructure without a demonstrated
+  need."
+- **The only legitimate trigger to look elsewhere is execution time / durability,
+  not scheduling.** Vercel Hobby functions cap at 60s. If a background task needs
+  minutes (e.g. Phase 4 batch-processing a whole reading list):
+    1. First try **Upstash QStash** to chunk/retry within short steps.
+    2. Only if that genuinely cannot work, consider a longer-run runtime —
+       **Google Cloud Run** (long requests) or **Azure Functions Consumption**
+       (configurable timeout) are the candidates. Cloudflare Workers' short CPU
+       budget makes long multi-step jobs awkward; not a clean fit.
+- **OPEN QUESTION to validate after deploy:** does a single
+  analyze → draft(+Mermaid) generation complete **within 60s** on Vercel? If yes,
+  no durable-jobs infra is needed for per-paper work and we keep the simple
+  `after()`/cron model. If it exceeds 60s, introduce QStash (or a longer-run
+  runtime) at that point — a measured decision, not a preemptive one.
+
+> Guardrail (unchanged): publishing/scheduling stay disabled until Phase 3, which
+> first requires verifying official LinkedIn API access and permissions. The
+> server must verify approval + exact version identity before any publish.
