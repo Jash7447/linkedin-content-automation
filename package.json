@@ -8,7 +8,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@google/genai": "2.29.1",
@@ -19,7 +21,8 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "server-only": "0.0.1",
-    "unpdf": "1.8.1"
+    "unpdf": "1.8.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "16.4.0",
@@ -29,7 +32,8 @@
     "eslint": "9.37.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.71.2"
+    "typescript-eslint": "8.71.2",
+    "vitest": "5.0.4"
   },
   "engines": {
     "node": ">=22.0.0"

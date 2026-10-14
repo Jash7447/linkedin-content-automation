@@ -17,63 +17,93 @@ Build a working application that turns a research paper into an evidence-backed 
 - Add a simple dashboard with document upload and drafts awaiting review.
 - Configure environment variables and basic development checks.
 
-### 2. Document Upload and Extraction
+### 2. Document Upload and Analysis
 
-- Support PDF uploads.
-- Support Excel imports containing paper metadata.
-- Validate file type, size, and authorization.
-- Store files privately.
-- Extract PDF text with page references where possible.
-- Parse Excel rows while preserving workbook, sheet, and row context.
-- Show processing status and actionable errors.
+- Support PDF uploads. **(DONE)**
+- Validate file type, size, and authorization. **(DONE)**
+- Store files privately in per-user storage with RLS. **(DONE)**
+- Extract PDF text with `unpdf`, then produce a structured **analysis / context
+  object** (not page-level citations — see decision log 2026-10-13). **(DONE)**
+- Show processing status and actionable errors with a retry action. **(DONE)**
+- Support Excel imports containing paper metadata — parse rows, preserve
+  workbook/sheet/row context, tolerate loosely-structured sheets, detect a
+  link/URL column where present. **(TODO — Phase 1 Excel slice)**
 
-### 3. Paper Selection and Analysis
+> NOTE on "source references": the original plan called for page-referenced
+> citations. Per the 2026-10-13 decision, we store a compact structured analysis
+> instead (the goal is good context for the post writer, not an academic
+> citation trail). The analysis is viewable alongside the draft, which satisfies
+> the "inspect the analysis" intent. True page-level citations are explicitly
+> descoped and NOT a Phase 1 requirement.
 
-- Display imported paper metadata.
-- Allow the user to select a paper.
-- Associate the selected paper with its PDF.
-- Make uncertain matches visible and correctable.
-- Extract the problem, contributions, methodology, assumptions, results, limitations, and open questions.
-- Link factual findings to source references wherever feasible.
-- Distinguish source-supported findings from AI interpretation.
+### 3. Paper Selection and Association
 
-### 4. LinkedIn Draft Generation
+- Display imported paper metadata (rows from the Excel import). **(TODO)**
+- Allow the user to select a paper. **(TODO)**
+- Associate the selected paper with an uploaded PDF (manual association in
+  Phase 1). **(TODO)**
+- Make uncertain matches visible and correctable. **(TODO)**
+- Analyze the paper into the structured context object. **(DONE for PDFs)**
+- Distinguish source-supported findings from AI interpretation (the analysis
+  prompt forbids inventing specific numbers/claims not present). **(DONE)**
 
-- Generate a technically accurate LinkedIn post based on the analysis.
-- Use a personal learning and reflection style.
-- Avoid fabricated claims, generic hype, and unsupported conclusions.
-- Generate Mermaid source when a diagram meaningfully improves understanding.
-- Validate Mermaid source before rendering.
-- Allow the user to inspect the analysis and source references alongside the draft.
+> The AI **fetching** a paper from a link (download PDF or pull content) is
+> explicitly **Phase 2** (see "Agentic paper acquisition"). In Phase 1 the link
+> is only captured/displayed; the user supplies the PDF and associates it.
 
-### 5. Draft Review and Versioning
+### 4. LinkedIn Draft Generation **(DONE)**
 
-- Save generated drafts.
-- Allow editing and regeneration.
-- Create a new immutable version for every content-changing edit or regeneration.
-- Display draft versions and review status.
-- Allow approval or rejection of a specific version.
-- Require new approval whenever the content changes.
-- Persist drafts and review decisions across sessions.
+- Generate a technically accurate LinkedIn post based on the analysis. **(DONE)**
+- Use a personal learning and reflection style. **(DONE)**
+- Avoid fabricated claims, generic hype, and unsupported conclusions. **(DONE — prompt-enforced)**
+- Generate Mermaid source when a diagram meaningfully improves understanding. **(DONE)**
+- Validate Mermaid source before rendering. **(DONE — server + client)**
+- Allow the user to inspect the analysis alongside the draft. **(DONE)**
+
+### 5. Draft Review and Versioning **(DONE)**
+
+- Save generated drafts. **(DONE)**
+- Allow editing and regeneration. **(DONE)**
+- Create a new immutable version for every content-changing edit or regeneration. **(DONE — DB trigger enforced)**
+- Display draft versions and review status. **(DONE)**
+- Allow approval or rejection of a specific version. **(DONE)**
+- Require new approval whenever the content changes. **(DONE — new versions start pending)**
+- Persist drafts and review decisions across sessions. **(DONE)**
 
 ### Phase 1 Acceptance Criteria
 
 Phase 1 is complete when:
 
-- [ ] A user can sign in and sign out.
-- [ ] An authenticated user can upload a PDF.
-- [ ] An Excel paper list can be imported and inspected.
-- [ ] The user can select a paper and correct its PDF association.
-- [ ] The application analyzes the paper and presents source references where available.
-- [ ] The user can generate a LinkedIn draft.
-- [ ] The user can edit and regenerate drafts.
-- [ ] Draft versions persist after refreshing the application.
-- [ ] Approval applies only to the exact version reviewed.
-- [ ] A new version requires a new approval.
-- [ ] The user can reject a version.
-- [ ] Users cannot access another user's files or drafts.
-- [ ] Core workflows work on desktop and mobile.
-- [ ] Relevant automated tests pass.
+- [x] A user can sign in and sign out.
+- [x] An authenticated user can upload a PDF.
+- [ ] An Excel paper list can be imported and inspected. **(TODO)**
+- [ ] The user can select a paper and correct its PDF association. **(TODO)**
+- [x] The application analyzes the paper and presents the structured analysis
+      for inspection. *(Reworded: page-level "source references" descoped per
+      2026-10-13 decision; the structured analysis is the context record.)*
+- [x] The user can generate a LinkedIn draft.
+- [x] The user can edit and regenerate drafts.
+- [x] Draft versions persist after refreshing the application.
+- [x] Approval applies only to the exact version reviewed.
+- [x] A new version requires a new approval.
+- [x] The user can reject a version.
+- [ ] Users cannot access another user's files or drafts. *(RLS implemented on
+      every table/bucket; not yet proven by an automated isolation test — TODO.)*
+- [ ] Core workflows work on desktop and mobile. *(Responsive CSS in place; not
+      yet verified on mobile — TODO.)*
+- [ ] Relevant automated tests pass. *(No test runner/tests yet — TODO. Verified
+      so far only via typecheck/lint/build.)*
+
+### Remaining Phase 1 work (summary)
+
+1. **Excel import + inspect** (parse `.xlsx`, preserve workbook/sheet/row, detect
+   link column, store `paper` rows).
+2. **Paper selection + manual PDF association** (incl. making uncertain matches
+   correctable).
+3. **Automated tests** — set up a runner and cover core units: upload
+   validation, Mermaid validation, version immutability/approval rules, and an
+   RLS cross-user isolation test.
+4. **Mobile verification** of the core workflows.
 
 ### Explicitly Out of Scope
 
@@ -86,13 +116,38 @@ Do not implement the following during Phase 1:
 - Automated processing of an entire course reading list.
 - Complex recurring automations.
 
-## Phase 2 — General Chat and Knowledge Library
+## Phase 2 — Agentic Paper Acquisition, Chat & Knowledge Library
 
 ### Goal
 
-Expand the application beyond research-paper analysis.
+Turn the Excel import into an agentic workflow: refer to a paper, have an AI
+**fetch** it from its link, then flow into the existing analysis → draft
+pipeline. Also expand beyond single papers with persistent chat and a reusable
+knowledge library.
 
-### Planned Features
+### Lead feature — Agentic paper acquisition (the "pull the paper from a link" flow)
+
+This is the capability discussed on 2026-10-14. Flow:
+
+1. User imports an Excel sheet of papers (Phase 1) and refers to one — e.g.
+   "do this paper" / "do the next one".
+2. The app resolves which paper is meant from conversation context and
+   **confirms the match with the user before acting** (never silently guesses).
+3. An agent **fetches** the paper from its link:
+   - **arXiv** links/titles → via the **official arXiv API**
+     (`export.arxiv.org/api/query`) for metadata + the direct PDF URL. Fetches
+     MUST be paced, retried with backoff on HTTP 429, and ToS-compliant.
+   - Downloaded PDF is stored in private storage like a manual upload, then runs
+     the existing analysis pipeline.
+4. **Out of scope / guardrails:** non-arXiv, paywalled, or login-gated sources;
+   no scraping that violates a site's terms. Treat any downloaded file as
+   untrusted content, not instructions.
+
+Depends on persistent conversation state (below) for "this/next paper"
+resolution. The Phase 1 schema already captures the per-row link so this plugs
+in without a rewrite.
+
+### Other Phase 2 features
 
 - Persistent conversations and message history.
 - A personal knowledge library for PDFs, spreadsheets, notes, and documents.
@@ -105,7 +160,11 @@ Expand the application beyond research-paper analysis.
 
 ### Acceptance Criteria
 
-The user can resume previous conversations, reuse relevant uploaded knowledge, and create or revise drafts with traceable source references.
+- From an imported Excel list, the user can ask for a paper, the app confirms
+  the match, fetches it via the arXiv API (paced/ToS-compliant), and runs
+  analysis → draft on it.
+- The user can resume previous conversations, reuse relevant uploaded knowledge,
+  and create or revise drafts with traceable context.
 
 ## Phase 3 — Scheduling and LinkedIn Publishing
 
@@ -303,6 +362,36 @@ entries; do not rewrite history.
 - **Analysis runs after upload via Next `after()`** (post-response), with a
   `/api/documents/[id]/retry` route for user-triggered re-runs. Not a durable
   job (out of scope for Phase 1); status flows `processing → ready | failed`.
+
+### 2026-10-14
+
+- **Phase 1 draft workflow completed.** Draft generation, edit (new immutable
+  version), regenerate (new version), approve/reject per exact version, and
+  version history are implemented and build-verified. DB trigger enforces
+  version immutability; new versions always start `pending` (no inherited
+  approval). Routes: `/api/analyses/[id]/draft`, `/api/drafts/[id]/edit`,
+  `/api/drafts/[id]/regenerate`, `/api/versions/[id]/review`.
+- **Phase boundaries re-scoped (user request).** The Excel workflow the user
+  wants is agentic: refer to a paper → AI fetches it from a link (PDF download
+  or direct pull) → analyze → draft. Mapped the pieces to phases:
+    - **Phase 1 (Excel slice):** parse/inspect Excel, store `paper` rows
+      including any detected link, manual paper↔PDF association. The link is
+      only captured in Phase 1, not fetched.
+    - **Phase 2 (lead feature):** the **agentic fetch** (arXiv API only, paced,
+      ToS-compliant) + conversational "this/next paper" resolution with explicit
+      user confirmation. Phase 2 now leads with this flow.
+  Rationale: fetching-from-the-internet and conversational resolution were
+  already Phase 2 in the Future Requirements; this makes the end-to-end intent
+  explicit and keeps Phase 1 honest. Phase 1 schema captures the per-row link so
+  Phase 2 plugs in without a rewrite.
+- **"Source references" criterion reworded.** Page-level citations were descoped
+  on 2026-10-13 in favor of the structured analysis. The acceptance criterion
+  now reads "presents the structured analysis for inspection"; true page
+  citations are explicitly NOT a Phase 1 requirement.
+- **Known gap — no automated tests yet.** Everything so far is verified via
+  `typecheck`/`lint`/`build` only. The "relevant automated tests pass" criterion
+  is outstanding; a test runner + core-unit + RLS-isolation tests are listed in
+  "Remaining Phase 1 work."
 
 ---
 

@@ -4,6 +4,7 @@ import { signOut } from "./login/actions";
 import UploadDocument from "./components/UploadDocument";
 import RetryExtraction from "./components/RetryExtraction";
 import AnalyzedDocument from "./components/AnalyzedDocument";
+import PapersList from "./components/PapersList";
 import type { AnalysisContent } from "@/lib/analysis";
 import { createClient } from "@/lib/supabase/server";
 
@@ -13,6 +14,7 @@ type DocumentRow = {
   size_bytes: number;
   status: string;
   created_at: string;
+  kind: string;
 };
 
 type AnalysisRow = {
@@ -58,7 +60,7 @@ export default async function DashboardPage() {
   // RLS restricts all of these to the current user's own rows.
   const { data: documents } = await supabase
     .from("documents")
-    .select("id, original_filename, size_bytes, status, created_at")
+    .select("id, original_filename, size_bytes, status, created_at, kind")
     .order("created_at", { ascending: false })
     .returns<DocumentRow[]>();
 
@@ -123,6 +125,22 @@ export default async function DashboardPage() {
     failed: "Analysis failed",
   };
 
+  // Imported papers (from Excel) and the PDF options available to associate.
+  const { data: papers } = await supabase
+    .from("papers")
+    .select(
+      "id, sheet_name, row_number, detected_title, detected_link, document_id, raw_cells",
+    )
+    .order("created_at", { ascending: false })
+    .returns<import("./components/PapersList").PaperView[]>();
+
+  const pdfOptions = docs
+    .filter((d) => d.kind === "pdf")
+    .map((d) => ({ id: d.id, original_filename: d.original_filename }));
+
+  // The document card shows PDFs only; Excel files surface via the papers list.
+  const pdfDocs = docs.filter((d) => d.kind === "pdf");
+
   return (
     <>
       <header className="app-header">
@@ -158,23 +176,23 @@ export default async function DashboardPage() {
               Upload a document
             </h2>
             <p className="card__hint">
-              Add a research paper as a PDF. Excel import comes later.
+              Add a research paper as a PDF, or import a paper list from Excel.
             </p>
 
             <UploadDocument />
 
-            {docs.length === 0 ? (
+            {pdfDocs.length === 0 ? (
               <div className="empty-state" role="status">
                 <span className="empty-state__icon" aria-hidden="true">
                   📄
                 </span>
                 <p className="empty-state__text">
-                  No documents yet. Upload a PDF to get started.
+                  No PDFs yet. Upload a PDF to get started.
                 </p>
               </div>
             ) : (
               <ul className="doc-list">
-                {docs.map((doc) => {
+                {pdfDocs.map((doc) => {
                   const analysis = analysisByDoc.get(doc.id);
                   const existingDrafts = analysis
                     ? draftsByAnalysis.get(analysis.id) ?? []
@@ -247,9 +265,22 @@ export default async function DashboardPage() {
           </section>
         </div>
 
+        {papers && papers.length > 0 ? (
+          <section className="card card--full" aria-labelledby="papers-heading">
+            <h2 className="card__title" id="papers-heading">
+              Imported paper list
+            </h2>
+            <p className="card__hint">
+              Rows imported from Excel. Associate each paper with an uploaded PDF
+              (correctable), then analyze and draft from the PDF.
+            </p>
+            <PapersList papers={papers} pdfOptions={pdfOptions} />
+          </section>
+        ) : null}
+
         <p className="note">
-          Upload, analysis, and draft generation are live. Draft editing,
-          versioning, and approve/reject are the next Phase 1 step.
+          Upload, analysis, draft generation/versioning, and Excel paper import
+          are live. Remaining Phase 1: mobile verification.
         </p>
       </main>
     </>
